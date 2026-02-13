@@ -1,0 +1,4 @@
+Deployer: 0xF554609524Ae96f40dBC06414d409b4ddeeB1980
+Deployed to: 0x88aF18958231bEAeAD99E6403f50786ad96d0a9c
+Transaction hash: 0xb7644f3a0150de336eba55b1938ded2b65a538f1584d8f7d61e8da6e0df6dd11
+beebozy@PC:~/hackathon/multichain-seedless-wallet/onchain$ 
