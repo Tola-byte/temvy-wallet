@@ -28,7 +28,11 @@ function validateRuntimeConfig() {
 }
 
 function corsOrigins(): string[] {
-  const defaults = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+  const defaults = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'https://temvy-wallet.vercel.app',
+  ];
   const fromEnv = (process.env.CORS_ORIGINS ?? '')
     .split(',')
     .map((value) => value.trim())
