@@ -30,6 +30,7 @@ import { AdminBootstrapDto } from './dto/admin-bootstrap.dto';
 import { TempoTransferWebhookDto } from './dto/tempo-transfer-webhook.dto';
 import { NotificationDeliveriesQueryDto } from './dto/notification-deliveries-query.dto';
 import { ConfirmSignedPaymentDto } from './dto/confirm-signed-payment.dto';
+import { BatchSendPaymentsDto } from './dto/batch-send-payments.dto';
 import { AuthUser } from './auth/auth.types';
 import { MetricsService } from './metrics.service';
 
@@ -436,16 +437,13 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       return this.paymentRowToResponse(pending);
     }
 
-    if (!auth.rawJwt) {
-      throw new UnauthorizedException(
-        'Missing bearer token for Privy authorization context. Use Authorization: Bearer <Privy access token>.',
-      );
+    const deployerPk = this.env('DEPLOYER_PRIVATE_KEY');
+    if (!deployerPk) {
+      throw new BadRequestException('DEPLOYER_PRIVATE_KEY is required for backend signing.');
     }
-    if (!sender.privyWalletId) {
-      throw new BadRequestException(
-        'Sender wallet is missing Privy wallet id. Re-authenticate so backend can link your embedded wallet id.',
-      );
-    }
+    const signer = new Wallet(deployerPk, this.provider as JsonRpcProvider);
+    const amountUnits = this.usdToTokenUnits(input.amountUsd, stablecoin.decimals);
+    const token = new Contract(stablecoin.address, TIP20_ABI, signer);
 
     this.db
       .prepare(
@@ -473,26 +471,12 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
     try {
       this.logger.log(
-        `[sendPayment] step=build_tx_request paymentId=${paymentId} senderWallet=${sender.walletAddress} recipientWallet=${recipient.walletAddress} stablecoin=${stablecoin.symbol}`,
+        `[sendPayment] step=deployer_send_start paymentId=${paymentId} signer=${signer.address} recipientWallet=${recipient.walletAddress} stablecoin=${stablecoin.symbol}`,
       );
-      const txRequest = await this.buildSignedTxRequest(
-        sender.walletAddress,
-        recipient.walletAddress,
-        stablecoin,
-        input.amountUsd,
-        memoHex,
-      );
-      this.logger.log(
-        `[sendPayment] step=privy_send_start paymentId=${paymentId} senderPrivyWalletId=${sender.privyWalletId}`,
-      );
-      const txHash = await this.sendPrivyAuthorizedTransaction(sender.privyWalletId, auth.rawJwt, {
-        from: sender.walletAddress,
-        to: txRequest.to,
-        data: txRequest.data,
-        value: txRequest.value,
-        gas: txRequest.gasLimit ? `0x${BigInt(txRequest.gasLimit).toString(16)}` : undefined,
-      });
-      this.logger.log(`[sendPayment] step=privy_send_ok paymentId=${paymentId} txHash=${txHash}`);
+      const tx = await token.transferWithMemo(recipient.walletAddress, amountUnits, memoHex);
+      await tx.wait(1);
+      const txHash = tx.hash;
+      this.logger.log(`[sendPayment] step=deployer_send_ok paymentId=${paymentId} txHash=${txHash}`);
 
       this.db
         .prepare(`UPDATE payments SET status = 'submitted', tx_hash = ?, updated_at = ? WHERE payment_id = ?`)
@@ -514,7 +498,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           paymentId,
         );
 
-      this.metrics.incPayment(settled ? 'settled' : 'failed', stablecoin.symbol, 'privy_authorized');
+      this.metrics.incPayment(settled ? 'settled' : 'failed', stablecoin.symbol, 'deployer_signer');
       await this.syncIndexerInternal();
 
       const row = this.db
@@ -524,11 +508,11 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         this.enqueuePaymentNotifications(row);
       }
 
-      this.audit(auth, 'send_payment_privy_authorized', paymentId, {
+      this.audit(auth, 'send_payment_deployer_signer', paymentId, {
         txHash,
         senderUserId: sender.id,
         senderWallet: sender.walletAddress,
-        senderPrivyWalletId: sender.privyWalletId,
+        deployerSigner: signer.address,
       });
 
       return this.paymentRowToResponse(row);
@@ -540,10 +524,71 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
            SET status = 'failed', updated_at = ?, failure_code = ?, failure_message = ?
            WHERE payment_id = ?`,
         )
-        .run(new Date().toISOString(), 'privy_authorized_error', message, paymentId);
+        .run(new Date().toISOString(), 'deployer_send_error', message, paymentId);
 
-      throw new BadRequestException(`Privy authorized send failed: ${message}`);
+      throw new BadRequestException(`Backend deployer-sign send failed: ${message}`);
     }
+  }
+
+  async sendBatchPayments(auth: AuthUser | undefined, input: BatchSendPaymentsDto) {
+    this.requireAuth(auth);
+
+    const batchId = `batch_${Date.now()}_${randomUUID().replace(/-/g, '').slice(0, 8)}`;
+    const prefix = input.idempotencyPrefix ?? batchId;
+    const stopOnFirstFailure = input.stopOnFirstFailure ?? false;
+    const startedAt = new Date().toISOString();
+    const results: Array<{
+      index: number;
+      idempotencyKey: string;
+      ok: boolean;
+      payment?: ReturnType<AppService['paymentRowToResponse']>;
+      error?: string;
+    }> = [];
+
+    for (let index = 0; index < input.items.length; index += 1) {
+      const item = input.items[index];
+      const idempotencyKey = item.idempotencyKey ?? `${prefix}_${String(index + 1).padStart(3, '0')}`;
+      try {
+        const payment = await this.sendPayment(auth, {
+          recipientHandle: item.recipientHandle,
+          amountUsd: item.amountUsd,
+          stablecoin: item.stablecoin,
+          memo: item.memo,
+          idempotencyKey,
+        });
+        results.push({ index, idempotencyKey, ok: true, payment });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        results.push({ index, idempotencyKey, ok: false, error: message });
+        if (stopOnFirstFailure) {
+          break;
+        }
+      }
+    }
+
+    const succeeded = results.filter((row) => row.ok).length;
+    const failed = results.length - succeeded;
+    const completedAt = new Date().toISOString();
+
+    this.audit(auth, 'send_payment_batch', batchId, {
+      itemCount: input.items.length,
+      processedCount: results.length,
+      succeeded,
+      failed,
+      stopOnFirstFailure,
+    });
+
+    return {
+      batchId,
+      startedAt,
+      completedAt,
+      itemCount: input.items.length,
+      processedCount: results.length,
+      succeeded,
+      failed,
+      stopOnFirstFailure,
+      results,
+    };
   }
 
   async prepareSignedPayment(auth: AuthUser | undefined, input: SendPaymentDto) {

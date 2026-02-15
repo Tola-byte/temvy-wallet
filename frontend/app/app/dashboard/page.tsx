@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { BalanceOverview } from "../../../components/BalanceOverview";
 import { ContactBalances } from "../../../components/ContactBalances";
-import { CopilotPanel } from "../../../components/CopilotPanel";
 import { TransactionTimeline } from "../../../components/TransactionTimeline";
 import { InlineNotice } from "../../../components/app/InlineNotice";
 import { fetchDashboard } from "../../../lib/backend-api";
@@ -20,9 +20,6 @@ export default function DashboardPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
-  const [weeklySpend, setWeeklySpend] = useState(0);
-  const [topMemo, setTopMemo] = useState("No expense found");
-  const [topAmount, setTopAmount] = useState(0);
   const [ledgerRows, setLedgerRows] = useState<ReturnType<typeof mapLedgerForUI>>([]);
 
   useEffect(() => {
@@ -45,9 +42,6 @@ export default function DashboardPage() {
           setTransfers(mappedTransfers);
           setContacts(mappedContacts);
           setBalances(mappedBalances);
-          setWeeklySpend(data.weekly.totalSpentUsd);
-          setTopMemo(data.weekly.biggestExpense?.memo ?? "No expense found");
-          setTopAmount(data.weekly.biggestExpense?.amountUsd ?? 0);
           setLedgerRows(mapLedgerForUI(data.ledger, mappedContacts));
         }
       } catch (e) {
@@ -124,7 +118,20 @@ export default function DashboardPage() {
         <TransactionTimeline history={transfers} contacts={contacts} />
       </div>
       <div className="stack">
-        <CopilotPanel weeklySpend={weeklySpend} topMemo={topMemo} topMemoAmount={topAmount} />
+        <section className="panel">
+          <div className="section-title-row">
+            <h2>Hackathon Edge</h2>
+            <span className="chip chip-success">Live demo ready</span>
+          </div>
+          <p className="meta-text">
+            Use Smart Split to enter one bill and auto-generate equal payouts to your contacts with one batch send.
+          </p>
+          <div className="composer-actions" style={{ marginTop: "0.75rem" }}>
+            <Link href="/app/send" className="btn btn-primary">
+              Open Smart Split
+            </Link>
+          </div>
+        </section>
       </div>
       </section>
     </section>

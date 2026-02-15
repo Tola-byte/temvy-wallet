@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ThemeSwitcher } from "../ThemeSwitcher";
 import { toFriendlyError } from "../../lib/error-format";
 import { InlineNotice } from "./InlineNotice";
 import { useSession } from "./session-context";
@@ -10,8 +9,7 @@ import { useSession } from "./session-context";
 const navItems = [
   { href: "/app/dashboard", label: "Dashboard" },
   { href: "/app/send", label: "Send" },
-  { href: "/app/activity", label: "Activity" },
-  { href: "/app/settings", label: "Settings" }
+  { href: "/app/activity", label: "Activity" }
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -47,7 +45,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <section className="app-main">
         <header className="app-topbar panel">
           <p className="meta-text">Authenticated with Privy</p>
-          <ThemeSwitcher />
         </header>
         {friendly ? <InlineNotice title={friendly.title} message={friendly.message} variant="error" /> : null}
         {children}

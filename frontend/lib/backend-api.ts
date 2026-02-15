@@ -135,6 +135,32 @@ export type PaymentResponse = {
   claimedAt?: string;
 };
 
+export type BatchSendPaymentInput = {
+  recipientHandle: string;
+  amountUsd: number;
+  stablecoin: string;
+  memo?: string;
+  idempotencyKey?: string;
+};
+
+export type BatchSendResponse = {
+  batchId: string;
+  startedAt: string;
+  completedAt: string;
+  itemCount: number;
+  processedCount: number;
+  succeeded: number;
+  failed: number;
+  stopOnFirstFailure: boolean;
+  results: Array<{
+    index: number;
+    idempotencyKey: string;
+    ok: boolean;
+    payment?: PaymentResponse;
+    error?: string;
+  }>;
+};
+
 export type ResolveRecipientResponse = {
   found: boolean;
   provisioned: boolean;
@@ -220,6 +246,16 @@ export async function sendPayment(
   return req<PaymentResponse>(session, "/v1/payments/send", {
     method: "POST",
     body: JSON.stringify({ ...input, idempotencyKey })
+  });
+}
+
+export async function sendPaymentsBatch(
+  session: BackendSession,
+  input: { items: BatchSendPaymentInput[]; stopOnFirstFailure?: boolean; idempotencyPrefix?: string }
+) {
+  return req<BatchSendResponse>(session, "/v1/payments/batch-send", {
+    method: "POST",
+    body: JSON.stringify(input)
   });
 }
 

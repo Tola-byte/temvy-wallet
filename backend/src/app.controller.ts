@@ -7,6 +7,7 @@ import { AdminBootstrapDto } from './dto/admin-bootstrap.dto';
 import { TempoTransferWebhookDto } from './dto/tempo-transfer-webhook.dto';
 import { NotificationDeliveriesQueryDto } from './dto/notification-deliveries-query.dto';
 import { ConfirmSignedPaymentDto } from './dto/confirm-signed-payment.dto';
+import { BatchSendPaymentsDto } from './dto/batch-send-payments.dto';
 import { AuthGuard } from './auth/auth.guard';
 import { RequestWithAuth } from './auth/auth.types';
 
@@ -23,6 +24,11 @@ export class AppController {
   @Post('payments/send')
   sendPayment(@Req() req: RequestWithAuth, @Body() body: SendPaymentDto) {
     return this.appService.sendPayment(req.authUser, body);
+  }
+
+  @Post('payments/batch-send')
+  sendBatchPayments(@Req() req: RequestWithAuth, @Body() body: BatchSendPaymentsDto) {
+    return this.appService.sendBatchPayments(req.authUser, body);
   }
 
   @Post('payments/prepare')

@@ -7,11 +7,13 @@ type Props = {
   onSend?: (
     input: { recipientHandle: string; amountUsd: number; stablecoin: string; memo?: string }
   ) => Promise<{ successMessage?: string } | void>;
+  onOpenBatch?: () => void;
+  onOpenSplit?: () => void;
 };
 
 const defaultTokens = ["pathUSD", "USDC", "USDT", "AlphaUSD"];
 
-export function PaymentComposer({ stablecoinOptions, onSend }: Props) {
+export function PaymentComposer({ stablecoinOptions, onSend, onOpenBatch, onOpenSplit }: Props) {
   const tokens = stablecoinOptions && stablecoinOptions.length > 0 ? stablecoinOptions : defaultTokens;
   const [recipientHandle, setRecipientHandle] = useState("");
   const [amountUsd, setAmountUsd] = useState("");
@@ -127,10 +129,10 @@ export function PaymentComposer({ stablecoinOptions, onSend }: Props) {
         ) : null}
       </form>
       <div className="quick-actions">
-        <button type="button" className="ghost-chip">
+        <button type="button" className="ghost-chip" onClick={onOpenSplit}>
           Split bill
         </button>
-        <button type="button" className="ghost-chip">
+        <button type="button" className="ghost-chip" onClick={onOpenBatch}>
           Batch payout
         </button>
         <button type="button" className="ghost-chip">
