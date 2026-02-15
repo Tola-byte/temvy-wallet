@@ -84,9 +84,9 @@ async function bootstrap() {
   );
 
   const port = Number(process.env.PORT ?? 3001);
-  await app.listen(port, '127.0.0.1');
+  await app.listen(port, '0.0.0.0');
   // eslint-disable-next-line no-console
-  console.log(`Invisible Wallet backend running on http://localhost:${port}`);
+  console.log(`Invisible Wallet backend running on 0.0.0.0:${port}`);
 }
 
 void bootstrap();
