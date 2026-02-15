@@ -193,7 +193,12 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit() {
     if (this.indexerEnabled && this.provider) {
-      await this.syncIndexerInternal();
+      try {
+        await this.syncIndexerInternal();
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Indexer initial sync failed (continuing without blocking startup): ${message}`);
+      }
       this.indexerTimer = setInterval(() => {
         this.syncIndexerInternal().catch((error: unknown) => {
           const message = error instanceof Error ? error.message : String(error);
@@ -449,6 +454,15 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       );
 
     try {
+      const deployerBalance = (await token.balanceOf(signer.address)) as bigint;
+      if (deployerBalance < amountUnits) {
+        throw new BadRequestException(
+          `Backend deployer signer has insufficient ${stablecoin.symbol} balance (${formatUnits(
+            deployerBalance,
+            stablecoin.decimals,
+          )} < ${formatUnits(amountUnits, stablecoin.decimals)} required).`,
+        );
+      }
       this.logger.log(
         `[sendPayment] step=deployer_send_start paymentId=${paymentId} signer=${signer.address} recipientWallet=${recipient.walletAddress} stablecoin=${stablecoin.symbol}`,
       );
@@ -493,7 +507,9 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
       return this.paymentRowToResponse(row);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      const decodedRevert = this.decodeTip20Revert(error);
+      const message = decodedRevert ? `${decodedRevert} | raw: ${rawMessage}` : rawMessage;
       this.db
         .prepare(
           `UPDATE payments
@@ -877,16 +893,31 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
     const balances = await Promise.all(
       this.stablecoins.map(async (token) => {
-        const contract = new Contract(token.address, TIP20_ABI, this.provider as JsonRpcProvider);
-        const raw = (await contract.balanceOf(owner.walletAddress)) as bigint;
-        const amount = Number(formatUnits(raw, token.decimals));
+        try {
+          const contract = new Contract(token.address, TIP20_ABI, this.provider as JsonRpcProvider);
+          const raw = (await contract.balanceOf(owner.walletAddress)) as bigint;
+          const amount = Number(formatUnits(raw, token.decimals));
 
-        return {
-          asset: token.symbol,
-          amount: Number(amount.toFixed(6)),
-          usdValue: Number(amount.toFixed(2)),
-          tokenAddress: token.address,
-        };
+          return {
+            asset: token.symbol,
+            amount: Number(amount.toFixed(6)),
+            usdValue: Number(amount.toFixed(2)),
+            tokenAddress: token.address,
+            available: true,
+          };
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error(
+            `[walletBalances] failed for token=${token.symbol} address=${token.address} wallet=${owner.walletAddress}: ${message}`,
+          );
+          return {
+            asset: token.symbol,
+            amount: 0,
+            usdValue: 0,
+            tokenAddress: token.address,
+            available: false,
+          };
+        }
       }),
     );
 
@@ -991,7 +1022,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       sentAt: row.sent_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+      payload: this.parseJsonObject(row.payload_json),
     }));
 
     const next = start + limit < countRow.total ? String(start + limit) : null;
@@ -1492,7 +1523,12 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     walletAddress: string;
   }): Promise<TransferRecord[]> {
     if (this.indexerEnabled && this.provider) {
-      await this.syncIndexerInternal();
+      try {
+        await this.syncIndexerInternal();
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`[transfers] indexer sync failed, serving cached data only: ${message}`);
+      }
     }
 
     const wallet = user.walletAddress.toLowerCase();
@@ -1951,6 +1987,72 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       requestId,
     };
     return JSON.stringify(detail);
+  }
+
+  private parseJsonObject(value: string): Record<string, unknown> {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return {};
+      }
+      return parsed as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+
+  private decodeTip20Revert(error: unknown): string | null {
+    const candidateData: string[] = [];
+    const err = error as {
+      data?: unknown;
+      error?: { data?: unknown };
+      info?: {
+        error?: { data?: unknown };
+      };
+      revert?: { signature?: string; name?: string; args?: unknown[] };
+    };
+    const pushIfHex = (value: unknown) => {
+      if (typeof value === 'string' && value.startsWith('0x') && value.length >= 10) {
+        candidateData.push(value);
+      }
+    };
+
+    pushIfHex(err?.data);
+    pushIfHex(err?.error?.data);
+    pushIfHex(err?.info?.error?.data);
+
+    for (const data of candidateData) {
+      try {
+        const parsed = TIP20_INTERFACE.parseError(data);
+        if (!parsed) {
+          continue;
+        }
+        if (parsed.name === 'InsufficientBalance') {
+          const current = parsed.args?.[0];
+          const expected = parsed.args?.[1];
+          const token = parsed.args?.[2];
+          return `TIP20 revert InsufficientBalance(current=${String(current)}, expected=${String(expected)}, token=${String(token)})`;
+        }
+        if (parsed.name === 'PolicyForbids') {
+          return 'TIP20 revert PolicyForbids (sender/recipient blocked by transfer policy)';
+        }
+        if (parsed.name === 'InvalidRecipient') {
+          return 'TIP20 revert InvalidRecipient';
+        }
+        if (parsed.name === 'ContractPaused') {
+          return 'TIP20 revert ContractPaused';
+        }
+        return `TIP20 revert ${parsed.name}`;
+      } catch {
+        // Not a TIP20 ABI-matched revert payload.
+      }
+    }
+
+    const signature = err?.revert?.signature ?? err?.revert?.name;
+    if (signature) {
+      return `Contract revert ${signature}`;
+    }
+    return null;
   }
 
   private ensureProvider() {

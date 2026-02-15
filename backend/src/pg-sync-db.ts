@@ -57,18 +57,37 @@ export class PgSyncDatabase {
       args.unshift(this.connectionString);
     }
 
-    const result = spawnSync('psql', args, {
-      encoding: 'utf8',
-      env: process.env,
-      maxBuffer: 10 * 1024 * 1024,
-    });
+    const parsedAttempts = Number(process.env.PG_SYNC_MAX_ATTEMPTS ?? 2);
+    const maxAttempts = Number.isFinite(parsedAttempts) && parsedAttempts > 0 ? Math.floor(parsedAttempts) : 2;
+    let result: ReturnType<typeof spawnSync> | null = null;
+    let lastErr = '';
 
-    if (result.error) {
-      throw result.error;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      result = spawnSync('psql', args, {
+        encoding: 'utf8',
+        env: process.env,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+
+      if (result.error) {
+        if (attempt < maxAttempts && this.isTransientPgError(result.error.message)) {
+          continue;
+        }
+        throw result.error;
+      }
+      if (result.status === 0) {
+        break;
+      }
+
+      lastErr = (result.stderr || result.stdout || 'Unknown PostgreSQL error').trim();
+      if (attempt < maxAttempts && this.isTransientPgError(lastErr)) {
+        continue;
+      }
+      throw new Error(lastErr);
     }
-    if (result.status !== 0) {
-      const err = (result.stderr || result.stdout || 'Unknown PostgreSQL error').trim();
-      throw new Error(err);
+
+    if (!result || result.status !== 0) {
+      throw new Error(lastErr || 'Unknown PostgreSQL error');
     }
 
     if (mode === 'run') {
@@ -124,5 +143,21 @@ export class PgSyncDatabase {
 
   private escape(value: string) {
     return value.replace(/'/g, "''");
+  }
+
+  private isTransientPgError(message: string) {
+    const lower = message.toLowerCase();
+    return [
+      'could not connect to server',
+      'connection refused',
+      'server closed the connection unexpectedly',
+      'the database system is starting up',
+      'terminating connection',
+      'connection reset by peer',
+      'timeout expired',
+      'network is unreachable',
+      'no route to host',
+      'temporary failure',
+    ].some((pattern) => lower.includes(pattern));
   }
 }
