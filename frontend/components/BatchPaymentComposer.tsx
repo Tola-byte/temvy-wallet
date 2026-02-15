@@ -155,7 +155,7 @@ export function BatchPaymentComposer({ stablecoinOptions, onSendBatch, onCloseBa
             </div>
           </article>
         ))}
-        <label className="batch-checkbox">
+        <label className="batch-checkbox batch-stop-checkbox">
           <input
             type="checkbox"
             checked={stopOnFirstFailure}

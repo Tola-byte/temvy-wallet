@@ -112,13 +112,13 @@ export function PaymentComposer({ stablecoinOptions, onSend, onOpenBatch, onOpen
             onChange={(e) => setMemo(e.target.value)}
           />
         </label>
-        <div className="composer-actions">
-          <button type="submit" className="btn btn-primary" disabled={sending}>
-            {sending ? "Sending..." : "Pay now"}
+        <div className="composer-actions payment-composer-actions">
+          <button type="submit" className="btn btn-primary pay-now-btn" disabled={sending}>
+            {sending ? "Sending..." : "Pay Now"}
           </button>
-          <button type="button" className="btn btn-secondary">
+          {/* <button type="button" className="btn btn-secondary">
             Request instead
-          </button>
+          </button> */}
         </div>
         {status ? (
           <InlineNotice
@@ -128,16 +128,16 @@ export function PaymentComposer({ stablecoinOptions, onSend, onOpenBatch, onOpen
           />
         ) : null}
       </form>
-      <div className="quick-actions">
+      <div className="quick-actions payment-quick-actions">
         <button type="button" className="ghost-chip" onClick={onOpenSplit}>
           Split bill
         </button>
         <button type="button" className="ghost-chip" onClick={onOpenBatch}>
-          Batch payout
+          Batch payment
         </button>
-        <button type="button" className="ghost-chip">
+        {/* <button type="button" className="ghost-chip">
           QR checkout
-        </button>
+        </button> */}
       </div>
     </section>
   );
